@@ -2,12 +2,16 @@ const fs = require('node:fs');
 const path = require('node:path');
 const https = require('node:https');
 const { URL } = require('node:url');
+const crypto = require('node:crypto');
 
 const root = __dirname;
 const port = Number(process.env.PORT || 8443);
 const dataFile = process.env.DATA_FILE || path.join(root, 'data.csv');
-const options = { pfx: fs.readFileSync(path.join(root, 'cert', 'portal.pfx')), passphrase: 'local-only' };
-const contentTypes = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.csv': 'text/csv; charset=utf-8' };
+const username = process.env.PORTAL_USER;
+const password = process.env.PORTAL_PASSWORD;
+if (!username || !password) throw new Error('Set PORTAL_USER and PORTAL_PASSWORD before starting the server.');
+const options = { pfx: fs.readFileSync(path.join(root, 'cert', 'portal.pfx')), passphrase: process.env.PORTAL_CERT_PASSWORD || 'local-only' };
+const contentTypes = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
 const allowedFiles = new Set(['index.html', 'app.js', 'styles.css']);
 const securityHeaders = {
   'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'",
@@ -16,6 +20,23 @@ const securityHeaders = {
   'X-Frame-Options': 'DENY',
   'Permissions-Policy': 'camera=(), microphone=(), geolocation=()'
 };
+const failedLogins = new Map();
+const maxFailures = 10;
+const retryWindow = 15 * 60 * 1000;
+const isAuthorized = request => {
+  const header = request.headers.authorization || '';
+  if (!header.startsWith('Basic ')) return false;
+  let supplied;
+  try { supplied = Buffer.from(header.slice(6), 'base64').toString('utf8'); } catch { return false; }
+  const separator = supplied.indexOf(':');
+  if (separator < 1) return false;
+  const suppliedUser = Buffer.from(supplied.slice(0, separator));
+  const suppliedPassword = Buffer.from(supplied.slice(separator + 1));
+  const expectedUser = Buffer.from(username);
+  const expectedPassword = Buffer.from(password);
+  return suppliedUser.length === expectedUser.length && suppliedPassword.length === expectedPassword.length && crypto.timingSafeEqual(suppliedUser, expectedUser) && crypto.timingSafeEqual(suppliedPassword, expectedPassword);
+};
+const clientAddress = request => request.socket.remoteAddress || 'unknown';
 const records = fs.readFileSync(dataFile, 'utf8').split(/\r?\n/).slice(1).filter(Boolean).map(line => {
   const columns = line.match(/(?:^|,)\s*(?:"((?:[^"]|"")*)"|([^,]*))/g) || [];
   const values = columns.map(column => column.replace(/^,/, '').trim().replace(/^"|"$/g, '').replace(/""/g, ''));
@@ -35,6 +56,17 @@ const score = (record, query) => {
 };
 
 https.createServer(options, (request, response) => {
+  const address = clientAddress(request);
+  const login = failedLogins.get(address);
+  if (login && login.until > Date.now()) { response.writeHead(429, { ...securityHeaders, 'Retry-After': Math.ceil((login.until - Date.now()) / 1000) }); response.end('Too many failed authentication attempts'); return; }
+  if (!isAuthorized(request)) {
+    const attempts = login && login.until <= Date.now() ? 1 : (login ? login.attempts + 1 : 1);
+    failedLogins.set(address, { attempts, until: attempts >= maxFailures ? Date.now() + retryWindow : 0 });
+    response.writeHead(attempts >= maxFailures ? 429 : 401, { ...securityHeaders, 'WWW-Authenticate': 'Basic realm="Deregistered Companies", charset="UTF-8"', 'Cache-Control': 'no-store' });
+    response.end('Authentication required');
+    return;
+  }
+  failedLogins.delete(address);
   if (request.method !== 'GET' && request.method !== 'HEAD') { response.writeHead(405, securityHeaders); response.end('Method not allowed'); return; }
   const requestPath = new URL(request.url, `https://${request.headers.host}`).pathname;
   if (requestPath === '/search') {
