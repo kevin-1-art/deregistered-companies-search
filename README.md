@@ -1,9 +1,9 @@
 # Deregistered Companies Search
 
-Search portal for the deregistered companies register. The browser sends a query to a server-side search service and receives only matching records; the source dataset is never downloaded to the browser.
+Search portal for the deregistered companies register. The page searches company names and BRNs, ranks close matches, and displays the BRN and deregistration date.
 
-The source workbook and its `data.csv` export are not included in this repository.
+The source workbook is not included in this repository. `data.csv` is the browser-ready export used by the static page.
 
 ## Security note
 
-GitHub Pages is static and cannot run the server-side search service. Deploy the page and `server.js` together on a private server, configure `DATA_FILE` to point to the local CSV export, and put the service behind HTTPS, authentication, and a firewall. Do not commit `data.csv` or the source workbook.
+This GitHub Pages deployment is public by design. Because the browser downloads `data.csv` to perform searches, the records are publicly retrievable.
