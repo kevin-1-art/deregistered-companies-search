@@ -37,12 +37,28 @@ const isAuthorized = request => {
   return suppliedUser.length === expectedUser.length && suppliedPassword.length === expectedPassword.length && crypto.timingSafeEqual(suppliedUser, expectedUser) && crypto.timingSafeEqual(suppliedPassword, expectedPassword);
 };
 const clientAddress = request => request.socket.remoteAddress || 'unknown';
+const normalize = value => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const normalizeCompanyName = value => {
+  const first = String(value || '').replace(/\s+/g, ' ').trim().replace(/^[^A-Za-z0-9]+/, '');
+  if (!first) return '';
+  return /^[A-Z]/.test(first) ? first : first.charAt(0).toUpperCase() + first.slice(1);
+};
+const normalizeBrn = value => {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const asNumber = Number(raw);
+  if (Number.isFinite(asNumber)) return asNumber.toLocaleString('en-US', { useGrouping: false, maximumFractionDigits: 0 });
+  return raw.replace(/\D+/g, '') || raw;
+};
 const records = fs.readFileSync(dataFile, 'utf8').split(/\r?\n/).slice(1).filter(Boolean).map(line => {
   const columns = line.match(/(?:^|,)\s*(?:"((?:[^"]|"")*)"|([^,]*))/g) || [];
   const values = columns.map(column => column.replace(/^,/, '').trim().replace(/^"|"$/g, '').replace(/""/g, ''));
-  return { brn: values[0] || '', company_name: values[1] || '', date_of_deregistration: values[2] || '' };
-}).filter(record => record.brn);
-const normalize = value => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  return {
+    brn: normalizeBrn(values[0] || ''),
+    company_name: normalizeCompanyName(values[1] || ''),
+    date_of_deregistration: (values[2] || '').trim()
+  };
+}).filter(record => record.brn && record.company_name);
 const score = (record, query) => {
   if (!query) return 0;
   const name = normalize(record.company_name);
