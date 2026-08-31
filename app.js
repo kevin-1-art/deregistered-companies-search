@@ -10,6 +10,8 @@ const status = document.querySelector('#status');
 
 const normalize = value => String(value || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
 const escapeHtml = value => String(value).replace(/[&<>'"]/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character]);
+const normalizeName = value => String(value || '').replace(/\s+/g, ' ').trim();
+
 
 function score(record, query) {
   if (!query) return 0;
@@ -50,7 +52,19 @@ function parseCsv(text) {
   }
   if (value || row.length) { row.push(value); rows.push(row); }
   const headers = rows.shift().map(header => header.trim().toLowerCase().replaceAll(' ', '_'));
-  return rows.map(columns => Object.fromEntries(headers.map((header, index) => [header, (columns[index] || '').trim()]))).filter(record => record.brn);
+  return rows
+    .map(columns => Object.fromEntries(headers.map((header, index) => [header, (columns[index] || '').trim()])))
+    .map(record => {
+      const companyName = normalizeName(record.company_name || record['company name'] || '');
+      if (!companyName || !/[A-Za-z]/.test(companyName)) return null;
+      return {
+        ...record,
+        company_name: companyName,
+        brn: String(record.brn || '').trim(),
+        date_of_deregistration: normalizeName(record.date_of_deregistration || record['date_of_deregistration'])
+      };
+    })
+    .filter(Boolean);
 }
 
 queryInput.addEventListener('input', event => { state.query = event.target.value; render(); });
